@@ -1,12 +1,64 @@
-from collections import defaultdict
-from typing import List, Dict
+"""BPE Tokenizer Trainer - Optimized Version
 
+Optimizations:
+1. Incremental update + Priority Queue for _compute_merges
+2. Parallel pretokenization with multiprocessing
+3. Fixed duplicate imports and type annotations
+"""
+
+from collections import defaultdict
+from typing import List, Dict, BinaryIO, Tuple
+from multiprocessing import Pool, cpu_count
+import heapq
 import os
 import regex as re
-from typing import List, BinaryIO, Tuple
+
+
+# ============= Parallel pretokenization worker (module-level for pickle) =============
+def _process_chunk_worker(args: Tuple[str, int, int, str, str]) -> List[str]:
+    """Worker function for parallel chunk processing."""
+    filepath, start, end, pattern, PAT = args
+    with open(filepath, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode("utf-8", errors="ignore")
+        chunk = chunk.replace('\r\n', '\n').replace('\r', '\n')
+        chunk_parts = re.split(pattern, chunk)
+        return [match.group() for chunk_item in chunk_parts 
+                for match in re.finditer(PAT, chunk_item)]
+
+
+class MaxHeapPair:
+    """Helper class to reverse pair comparison for min-heap to act as max-heap tie-breaker."""
+    def __init__(self, pair):
+        self.pair = pair
+    
+    def __lt__(self, other):
+        # We want larger pairs to be popped first (to match max() behavior),
+        # so larger pairs must be considered "smaller" in the min-heap.
+        return self.pair > other.pair
+    
+    def __eq__(self, other):
+        return self.pair == other.pair
+    
+    def __repr__(self):
+        return f"MaxHeapPair({self.pair})"
+
+
+
 
 class RegexTokenizer:
-    def __init__(self, filepath:str, PAT=None, pattern=None, special_tokens: List[str]=["<|endoftext|>"] ):
+    def __init__(self, filepath:str, PAT=None, pattern=None, special_tokens: List[str]=None ):
+        """
+        初始化正则分词器。
+        
+        Args:
+            filepath: 输入文本文件路径
+            PAT: 预留参数（未使用）
+            pattern: 预留参数（未使用）
+            special_tokens: 特殊 token 列表，默认为 ["<|endoftext|>"]
+        """
+        if special_tokens is None:
+            special_tokens = ["<|endoftext|>"]
         self.filepath = filepath
         self.special_tokens = special_tokens
         self.PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -20,8 +72,17 @@ class RegexTokenizer:
         split_special_token: bytes,
     ) -> list[int]:
         """
-        Chunk the file into parts that can be counted independently.
-        May return fewer chunks if the boundaries end up overlapping.
+        将文件分割成多个独立处理的块。
+        按特殊 token 位置对齐块边界，以便并行处理。
+        如果边界重叠，返回的块数可能少于 desired_num_chunks。
+        
+        Args:
+            file: 二进制文件对象
+            desired_num_chunks: 期望的块数
+            split_special_token: 用于对齐块边界的特殊 token（字节形式）
+        
+        Returns:
+            块边界位置列表（字节偏移量）
         """
         assert isinstance(split_special_token, bytes), "Must represent special token as a bytestring"
 
@@ -61,66 +122,117 @@ class RegexTokenizer:
         return sorted(set(chunk_boundaries))
 
 
-    def pretokenize(self) -> List[str]:
+    def pretokenize(self, num_workers: int = None) -> List[str]:
+        """
+        预分词：将文本文件分块读取并进行正则匹配分词。
+        支持并行处理。
+        
+        Args:
+            num_workers: 并行进程数，默认为 CPU 核心数
+        
+        Returns:
+            预分词后的 token 列表（字符串形式）
+        """
         tokens = []
+        if num_workers is None:
+            num_workers = min(cpu_count(), 4)
+            
         with open(self.filepath, "rb") as f:
-            num_processes = 4
-            boundaries = self.find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
+            # Use default special token for splitting if not specified, 
+            # assuming special_tokens[0] is the separator like <|endoftext|>
+            boundary_token = self.special_tokens[0].encode("utf-8") if self.special_tokens else b""
+            boundaries = self.find_chunk_boundaries(f, num_workers, boundary_token)
 
-            # The following is a serial implementation, but you can parallelize this
-            # by sending each start/end pair to a set of processes.
+            # Parallel execution
+            # Prepare arguments for each chunk
+            chunk_args = []
             for start, end in zip(boundaries[:-1], boundaries[1:]):
-                f.seek(start)
-                chunk = f.read(end - start).decode("utf-8", errors="ignore")
-                # 规范化换行符：Windows CRLF -> LF
-                chunk = chunk.replace('\r\n', '\n').replace('\r', '\n')
-                chunk_parts = re.split(self.pattern, chunk)
-                tokens.extend([match.group() for chunk_item in chunk_parts for match in re.finditer(self.PAT, chunk_item)])
-                # Run pre-tokenization on your chunk and store the counts for each pre-token
+                chunk_args.append((self.filepath, start, end, self.pattern, self.PAT))
+            
+            with Pool(processes=num_workers) as pool:
+                results = pool.map(_process_chunk_worker, chunk_args)
+                
+            for res in results:
+                tokens.extend(res)
+                
         return tokens
     
     def potokenize_text(self, text:str) -> List[str]:
+        """
+        对单个文本字符串进行预分词（未在 train 中使用，提供额外接口）。
+        
+        Args:
+            text: 输入文本字符串
+        
+        Returns:
+            预分词后的 token 列表
+        """
         text_parts = re.split(self.pattern, text)
         tokens = [match.group() for chunk_item in text_parts for match in re.finditer(self.PAT, chunk_item)]
         return tokens
     
 class BPE_Tokenizer_Trainer:
     def __init__(self, input_path:str, vocab_size:int, special_tokens:list[str]):
+        """
+        初始化 BPE 分词器训练器。
+        
+        Args:
+            input_path: 输入文本文件路径
+            vocab_size: 目标词表大小
+            special_tokens: 特殊 token 列表
+        """
         self.input_path = input_path
         self.vocab_size = vocab_size
         self.special_tokens = special_tokens if special_tokens else []
 
-        self.word_freqs = {}
-        self.merges:List[tuple[bytes, bytes]] = []
-        self.vocab:Dict[int, bytes] = {}
-        self.inverse_vocab: Dict[bytes, int] = {}
+        self.word_freqs = {}  # 预分词后的词频
+        self.merges:List[tuple[bytes, bytes]] = []  # BPE 合并规则列表
+        self.vocab:Dict[int, bytes] = {}  # token_id -> 字节序列
+        self.inverse_vocab: Dict[bytes, int] = {}  # 字节序列 -> token_id
 
 
     def train(self) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
+        """
+        训练 BPE 分词器的主函数。
+        执行流程：初始化词表 -> 预分词 -> 计算合并规则 -> 更新词表。
+        
+        Returns:
+            (vocab, merges) 元组
+            - vocab: token_id 到 byte 序列的映射
+            - merges: 所有 BPE 合并规则的列表
+        """
         min_vocab_size = 256 + len(self.special_tokens)
         self.vocab, self.inverse_vocab = self._initialize_vocab()
 
         assert self.vocab_size >= min_vocab_size, f"Vocab size must be at least {min_vocab_size}"
 
-        self.vocab, self.inverse_vocab = self._initialize_vocab() # 初始化词表
+        word_freqs = self._pretokenize_corpus()  # 预分词并计算词频
 
-        word_freqs = self._pretokenize_corpus() # 预分词并计算词频
+        self.merges = self._compute_merges(word_freqs)  # 计算 BPE 合并规则
 
-        self.merges = self._compute_merges(word_freqs)  # 计算BPE合并规则
-
-        self._update_vocab_with_merges() # 更新词表
+        self._update_vocab_with_merges()  # 更新词表
 
         return self.vocab, self.merges
     
     def _initialize_vocab(self) -> Dict[int, bytes]:
+        """
+        初始化词表，包含特殊 token 和所有 256 个单字节 token。
+        
+        Returns:
+            (vocab, inverse_vocab) 元组
+            - vocab: token_id -> bytes
+            - inverse_vocab: bytes -> token_id
+        """
         vocab = {}
         inverse_vocab = {}
 
+        # 添加特殊 token
         for i, token in enumerate(self.special_tokens):
             token_bytes = token.encode('utf-8')
             vocab[i] = token_bytes
             inverse_vocab[token_bytes] = i
 
+        # 添加 256 个单字节 token (0x00 - 0xFF)
         for i in range(256):
             token_id = len(self.special_tokens) + i
             byte_token = bytes([i])
@@ -130,17 +242,30 @@ class BPE_Tokenizer_Trainer:
         return vocab, inverse_vocab
     
     def _pretokenize_corpus(self) -> Dict[Tuple[bytes, ...], int]:
+        """
+        预分词语料库：分割文本 -> 编码为字节 -> 统计频率。
+        
+        处理流程：
+        1. 用 RegexTokenizer 进行预分词（得到字符串 token）
+        2. 将每个 token 编码为 UTF-8 字节序列
+        3. 将字节序列拆分为单字节 token 的元组
+        4. 统计每种 token 序列的出现频率
+        
+        Returns:
+            词频字典，键为字节元组，值为出现次数
+            例如：{(b'c', b'a', b't'): 5, (b'd', b'o', b'g'): 3}
+        """
         word_freqs = defaultdict(int)
         regex_tokenizer = RegexTokenizer(
             filepath = self.input_path,
             special_tokens = self.special_tokens
         )
 
+        # 进行正则预分词
         tokens = regex_tokenizer.pretokenize()
         for token in tokens:
             # 将字符串 token 编码为 UTF-8 字节序列
             # 例如："你好" -> b'\xe4\xbd\xa0\xe5\xa5\xbd'
-            # 语料中可能会包含多字节字符，如中文、日文、韩文等，不要拆分为单字节 token 再enco
             word_bytes = token.encode('utf-8')
 
             # 将字节序列拆分为单字节 token 的元组
@@ -157,35 +282,100 @@ class BPE_Tokenizer_Trainer:
             self,
             word_freqs: dict[tuple[bytes, ...], int]
     ) -> List[tuple[bytes, bytes]]:
-        
+        """
+        计算 BPE 合并规则（优化版：增量更新 + 优先队列）。
+        """
         merges = []
-
-        current_vocab_size = len(self.vocab)
-        working_freqs = dict(word_freqs)
-
-        target_merges = self.vocab_size - current_vocab_size
-
-        for merge_num in range(target_merges):
-            # 1. 统计所有 token 序列中相邻 byte pair 的出现频率
-            pair_counts = self._count_pairs(working_freqs)
-
-            if not pair_counts:
+        target_merges = self.vocab_size - len(self.vocab)
+        
+        # 1. Build initial counts and inverted index
+        pair_counts = defaultdict(int)
+        # pair -> set of words containing it
+        pair_to_words = defaultdict(set)
+        
+        for word, freq in word_freqs.items():
+            for i in range(len(word) - 1):
+                pair = (word[i], word[i + 1])
+                pair_counts[pair] += freq
+                pair_to_words[pair].add(word)
+        
+        # 2. Build max heap (-count, MaxHeapPair(pair))
+        pq = []
+        for pair, count in pair_counts.items():
+            heapq.heappush(pq, (-count, MaxHeapPair(pair)))
+            
+        for _ in range(target_merges):
+            # Find best pair
+            best_pair = None
+            while pq:
+                count, max_heap_pair = heapq.heappop(pq)
+                pair = max_heap_pair.pair
+                if -count == pair_counts[pair]:
+                    best_pair = pair
+                    break
+            
+            if not best_pair or pair_counts[best_pair] < 1:
                 break
-            most_frequent_pair = max(
-                pair_counts.items(),
-                key=lambda x: (x[1], x[0])
-            )[0]    
-            # 3. 在所有 token 序列中执行该 pair 的合并操作
-            #    (a, b) → ab
-            working_freqs = self._merge_pair(
-                working_freqs,
-                most_frequent_pair
-            )
+                
+            merges.append(best_pair)
+            p0, p1 = best_pair
+            new_token = p0 + p1
+            
+            # Words to update (copy set to avoid modification during iteration)
+            words_to_update = list(pair_to_words[best_pair])
+            
+            # Collect deltas for bulk update
+            # word -> freq_change
+            word_updates = defaultdict(int)
+            
+            for word in words_to_update:
+                if word not in word_freqs: continue
+                freq = word_freqs[word]
+                
+                # Create merged word
+                new_word_list = []
+                i = 0
+                while i < len(word):
+                    if i < len(word) - 1 and word[i] == p0 and word[i+1] == p1:
+                        new_word_list.append(new_token)
+                        i += 2
+                    else:
+                        new_word_list.append(word[i])
+                        i += 1
+                new_word = tuple(new_word_list)
+                
+                if new_word != word:
+                    word_updates[word] -= freq
+                    word_updates[new_word] += freq
+                    
+            # Apply updates
+            for word, freq_change in word_updates.items():
+                if freq_change == 0: continue
+                
+                current_freq = word_freqs.get(word, 0)
+                new_freq = current_freq + freq_change
+                
+                if new_freq <= 0:
+                    if word in word_freqs: del word_freqs[word]
+                    # Clean up indices if needed (optional for correctness but good for memory)
+                    if new_freq == 0:
+                        for i in range(len(word) - 1):
+                            p = (word[i], word[i+1])
+                            if p in pair_to_words: pair_to_words[p].discard(word)
+                else:
+                    word_freqs[word] = new_freq
+                    # Ensure new word is in indices
+                    for i in range(len(word) - 1):
+                        p = (word[i], word[i+1])
+                        pair_to_words[p].add(word)
+                        
+                # Update pair counts
+                for i in range(len(word) - 1):
+                    p = (word[i], word[i+1])
+                    pair_counts[p] += freq_change
+                    # Push updated count to heap
+                    heapq.heappush(pq, (-pair_counts[p], MaxHeapPair(p)))
 
-            # 4. 将该 merge 规则记录下来（顺序很重要）
-            merges.append(most_frequent_pair)
-
-            # 返回完整的 BPE 合并规则列表
         return merges
 
     def _merge_pair(
@@ -263,14 +453,19 @@ class BPE_Tokenizer_Trainer:
         return dict(pair_counts)
 
     def _update_vocab_with_merges(self):
-        # 基础词表大小：
-        # = 特殊 token 数量 + 256 个单字节 token
+        """
+        根据合并规则更新词表。
+        
+        将每个 merge 规则转换为 (token_id, 合并的字节序列) 的映射。
+        token_id 从 base_vocab_size 开始连续递增，顺序与 merge 规则一致。
+        这个顺序在编码/解码时很重要。
+        """
+        # 基础词表大小：= 特殊 token 数量 + 256 个单字节 token
         # 新生成的 BPE token 将从该索引之后依次编号
         base_vocab_size = 256 + len(self.special_tokens)
 
         # 依次遍历所有 merge 规则（顺序非常重要）
         for i, (token_a, token_b) in enumerate(self.merges):
-
             # 将 byte pair (a, b) 合并成一个新的 byte token
             # 例如：(b'h', b'e') -> b'he'
             merged_token = token_a + token_b
