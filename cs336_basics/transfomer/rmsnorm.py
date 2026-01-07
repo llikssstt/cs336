@@ -13,5 +13,5 @@ class RMSNorm(nn.Module):
         avg = torch.mean(x**2, dim=-1, keepdim=True)
         RMS = torch.sqrt(avg + self.eps)
         x = x / RMS
-        x = einsum(x, self.weight, '... d_model, d_model -> ... d_model')
+        x = x * self.weight
         return x

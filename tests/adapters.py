@@ -170,7 +170,20 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.multi_head_self_attention import MHA
+    mha = MHA(d_model, num_heads)
+    dtype = torch.float32
+    device = torch.device('cpu')
+    state1 = {'q_w.weight':q_proj_weight.to(dtype=dtype, device=device)}
+    state2 = {'k_w.weight':k_proj_weight.to(dtype=dtype, device=device)}
+    state3 = {'v_w.weight':v_proj_weight.to(dtype=dtype, device=device)}
+    state4 = {'combine.weight':o_proj_weight.to(dtype=dtype, device=device)}
+    mha.load_state_dict(state1, strict=False)
+    mha.load_state_dict(state2, strict=False)
+    mha.load_state_dict(state3, strict=False)
+    mha.load_state_dict(state4, strict=False)
+
+    return mha(in_features)
 
 
 def run_multihead_self_attention_with_rope(
@@ -210,7 +223,19 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.multi_head_self_attention import MHA
+    mha = MHA(d_model, num_heads, max_seq_len, theta)
+    dtype = torch.float32
+    device = torch.device('cpu')
+    state1 = {'q_w.weight':q_proj_weight.to(dtype=dtype, device=device)}
+    state2 = {'k_w.weight':k_proj_weight.to(dtype=dtype, device=device)}
+    state3 = {'v_w.weight':v_proj_weight.to(dtype=dtype, device=device)}
+    state4 = {'combine.weight':o_proj_weight.to(dtype=dtype, device=device)}
+    mha.load_state_dict(state1)
+    mha.load_state_dict(state2)
+    mha.load_state_dict(state3)
+    mha.load_state_dict(state4)
+    return mha(in_features, token_positions)
 
 
 def run_rope(
@@ -307,7 +332,31 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.transfomer_block import TransfomerBlock
+    TB = TransfomerBlock(d_model, num_heads, d_ff, max_seq_len, theta)
+
+    device = in_features.device
+    dtype = in_features.dtype
+
+    mapped = {
+        # attention
+        "mha.q_w.weight": weights["attn.q_proj.weight"].to(device=device, dtype=dtype),
+        "mha.k_w.weight": weights["attn.k_proj.weight"].to(device=device, dtype=dtype),
+        "mha.v_w.weight": weights["attn.v_proj.weight"].to(device=device, dtype=dtype),
+        "mha.combine.weight": weights["attn.output_proj.weight"].to(device=device, dtype=dtype),
+
+        # norms
+        "norm1.weight": weights["ln1.weight"].to(device=device, dtype=dtype),
+        "norm2.weight": weights["ln2.weight"].to(device=device, dtype=dtype),
+
+        # ffn (SwiGLU)
+        "swiglu.w1": weights["ffn.w1.weight"].to(device=device, dtype=dtype),
+        "swiglu.w2": weights["ffn.w2.weight"].to(device=device, dtype=dtype),
+        "swiglu.w3": weights["ffn.w3.weight"].to(device=device, dtype=dtype),
+    }
+
+    TB.load_state_dict(mapped, strict=True)
+    return TB(in_features)
 
 
 def run_transformer_lm(

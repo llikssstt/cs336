@@ -4,11 +4,14 @@ class RoPE(nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
         super(RoPE, self).__init__()
 
-        self.theta = theta
+        if theta is None:
+            theta = 10000.0
+        self.theta = float(theta)
         self.d_k = d_k
         self.max_seq_len = max_seq_len
-
-        half = d_k / 2
+        if d_k % 2 != 0:
+            raise ValueError("d_k must be even")
+        half = d_k // 2
         inv_freq = self.theta ** (-2 * torch.arange(half, dtype=torch.float32, device=device) / d_k)
 
         positions = torch.arange(max_seq_len, dtype=torch.float32, device=device)
@@ -26,6 +29,9 @@ class RoPE(nn.Module):
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor) -> torch.Tensor:
         cos = self.cos_cached[token_positions]
         sin = self.sin_cached[token_positions]
+
+        cos = cos.to(dtype=x.dtype, device=x.device)
+        sin = sin.to(dtype=x.dtype, device=x.device)
 
         x0 = x[..., ::2]
         x1 = x[..., 1::2]
