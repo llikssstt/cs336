@@ -14,15 +14,15 @@ class TransfomerBlock(nn.Module):
         self.max_seq_len = max_seq_len
         self.theta = theta
 
-        self.mha = MHA(self.d_model, self.num_heads, self.max_seq_len, self.theta)
-        self.norm1 = RMSNorm(self.d_model)
-        self.norm2 = RMSNorm(self.d_model)
+        self.attn = MHA(self.d_model, self.num_heads, self.max_seq_len, self.theta)
+        self.ln1 = RMSNorm(self.d_model)
+        self.ln2 = RMSNorm(self.d_model)
 
-        self.swiglu = SwiGLU(self.d_model, self.d_ff)
+        self.ffn = SwiGLU(self.d_model, self.d_ff)
 
     def forward(self, x: torch.Tensor, token_positions: torch.Tensor | None = None) -> torch.Tensor:
-        y1 = x + self.mha(self.norm1(x), token_positions=token_positions)
-        y2 = y1 + self.swiglu(self.norm2(y1))
+        y1 = x + self.attn(self.ln1(x), token_positions=token_positions)
+        y2 = y1 + self.ffn(self.ln2(y1))
         return y2
 
 

@@ -6,7 +6,7 @@ class Linear(nn.Module):
         super(Linear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = nn.Parameter(torch.empty((out_features, in_features), dtype = dtype)).to(device=device)
+        self.weight = nn.Parameter(torch.empty((out_features, in_features), dtype = dtype))
         std = (2 / (in_features + out_features)) ** 0.5
         nn.init.trunc_normal_(
             self.weight,

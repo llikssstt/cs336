@@ -6,6 +6,7 @@ from .embedding import Embedding
 from .rmsnorm import RMSNorm
 from .linear import Linear
 from .softmax import Softmax
+
 class Transformer_LM(nn.Module):
     def __init__(self,vocab_size: int, context_length: int, d_model: int,num_layers: int, num_heads: int, d_ff: int,rope_theta: float):
 
@@ -24,9 +25,13 @@ class Transformer_LM(nn.Module):
         ])        
         self.token_embeddings = Embedding(self.vocab_size, self.d_model)
         self.ln_final = RMSNorm(self.d_model)
-        self.lm_head = Linear(self.vocab_size, self.d_model)
-        self.softmax = Softmax(dimension=-1)
+        self.lm_head = Linear(self.d_model, self.vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        
+        x = self.token_embeddings(x)
+        for TransfomerBlock in self.layers:
+            x = TransfomerBlock(x)
+        x = self.ln_final(x)
+        x = self.lm_head(x)
+        return x
         

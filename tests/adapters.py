@@ -340,19 +340,19 @@ def run_transformer_block(
 
     mapped = {
         # attention
-        "mha.q_w.weight": weights["attn.q_proj.weight"].to(device=device, dtype=dtype),
-        "mha.k_w.weight": weights["attn.k_proj.weight"].to(device=device, dtype=dtype),
-        "mha.v_w.weight": weights["attn.v_proj.weight"].to(device=device, dtype=dtype),
-        "mha.combine.weight": weights["attn.output_proj.weight"].to(device=device, dtype=dtype),
+        "attn.q_w.weight": weights["attn.q_proj.weight"].to(device=device, dtype=dtype),
+        "attn.k_w.weight": weights["attn.k_proj.weight"].to(device=device, dtype=dtype),
+        "attn.v_w.weight": weights["attn.v_proj.weight"].to(device=device, dtype=dtype),
+        "attn.combine.weight": weights["attn.output_proj.weight"].to(device=device, dtype=dtype),
 
         # norms
-        "norm1.weight": weights["ln1.weight"].to(device=device, dtype=dtype),
-        "norm2.weight": weights["ln2.weight"].to(device=device, dtype=dtype),
+        "ln1.weight": weights["ln1.weight"].to(device=device, dtype=dtype),
+        "ln2.weight": weights["ln2.weight"].to(device=device, dtype=dtype),
 
         # ffn (SwiGLU)
-        "swiglu.w1": weights["ffn.w1.weight"].to(device=device, dtype=dtype),
-        "swiglu.w2": weights["ffn.w2.weight"].to(device=device, dtype=dtype),
-        "swiglu.w3": weights["ffn.w3.weight"].to(device=device, dtype=dtype),
+        "ffn.w1": weights["ffn.w1.weight"].to(device=device, dtype=dtype),
+        "ffn.w2": weights["ffn.w2.weight"].to(device=device, dtype=dtype),
+        "ffn.w3": weights["ffn.w3.weight"].to(device=device, dtype=dtype),
     }
 
     TB.load_state_dict(mapped, strict=True)
@@ -438,7 +438,36 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.transformer_lm import Transformer_LM
+    TL = Transformer_LM(vocab_size, context_length, d_model, num_layers, num_heads, d_ff, rope_theta)
+
+    device = in_indices.device
+    dtype = torch.float32  # Weights must be float, not int like in_indices
+    mapped = {
+        "token_embeddings.weight": weights["token_embeddings.weight"].to(device=device, dtype=dtype),
+        "ln_final.weight": weights["ln_final.weight"].to(device=device, dtype=dtype),
+        "lm_head.weight": weights["lm_head.weight"].to(device=device, dtype=dtype),
+    }
+
+    for i in range(num_layers):
+        mapped.update({
+            # attention
+            f"layers.{i}.attn.q_w.weight": weights[f"layers.{i}.attn.q_proj.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.attn.k_w.weight": weights[f"layers.{i}.attn.k_proj.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.attn.v_w.weight": weights[f"layers.{i}.attn.v_proj.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.attn.combine.weight": weights[f"layers.{i}.attn.output_proj.weight"].to(device=device, dtype=dtype),
+
+            # norms
+            f"layers.{i}.ln1.weight": weights[f"layers.{i}.ln1.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.ln2.weight": weights[f"layers.{i}.ln2.weight"].to(device=device, dtype=dtype),
+
+            # ffn (SwiGLU)
+            f"layers.{i}.ffn.w1": weights[f"layers.{i}.ffn.w1.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.ffn.w2": weights[f"layers.{i}.ffn.w2.weight"].to(device=device, dtype=dtype),
+            f"layers.{i}.ffn.w3": weights[f"layers.{i}.ffn.w3.weight"].to(device=device, dtype=dtype),
+        })
+    TL.load_state_dict(mapped, strict=True)
+    return TL(in_indices)
 
 
 def run_rmsnorm(

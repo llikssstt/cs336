@@ -11,7 +11,7 @@ class Embedding(nn.Module):
         self.vocab_size = num_embeddings
         self.d_model = embedding_dim
 
-        self.weight = nn.Parameter(torch.empty((self.vocab_size, self.d_model), dtype=dtype)).to(device=device)
+        self.weight = nn.Parameter(torch.empty((self.vocab_size, self.d_model), dtype=dtype))
         nn.init.trunc_normal_(
             self.weight,
             mean=0.0,
