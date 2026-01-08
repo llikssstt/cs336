@@ -28,9 +28,14 @@ class Transformer_LM(nn.Module):
         self.lm_head = Linear(self.d_model, self.vocab_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x is (batch, seq_len) token indices
+        seq_len = x.shape[-1]
+        # Generate token positions: [0, 1, 2, ..., seq_len-1]
+        token_positions = torch.arange(seq_len, device=x.device).unsqueeze(0)
+        
         x = self.token_embeddings(x)
-        for TransfomerBlock in self.layers:
-            x = TransfomerBlock(x)
+        for layer in self.layers:
+            x = layer(x, token_positions=token_positions)
         x = self.ln_final(x)
         x = self.lm_head(x)
         return x

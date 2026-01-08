@@ -49,11 +49,10 @@ class MHA(nn.Module):
         k = rearrange(k, 'b s h d -> b h s d')
         v = rearrange(v, 'b s h d -> b h s d')
         
-        if token_positions is None:
-            # Generate default sequential positions: [0, 1, 2, ..., seq_len-1]
-            token_positions = torch.arange(seq_len, device=in_features.device).unsqueeze(0)
-        q = self.rope(q, token_positions)
-        k = self.rope(k, token_positions)
+        # Only apply RoPE when token_positions is explicitly provided
+        if token_positions is not None:
+            q = self.rope(q, token_positions)
+            k = self.rope(k, token_positions)
         
 
         mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool))

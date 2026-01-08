@@ -174,14 +174,15 @@ def run_multihead_self_attention(
     mha = MHA(d_model, num_heads)
     dtype = torch.float32
     device = torch.device('cpu')
-    state1 = {'q_w.weight':q_proj_weight.to(dtype=dtype, device=device)}
-    state2 = {'k_w.weight':k_proj_weight.to(dtype=dtype, device=device)}
-    state3 = {'v_w.weight':v_proj_weight.to(dtype=dtype, device=device)}
-    state4 = {'combine.weight':o_proj_weight.to(dtype=dtype, device=device)}
-    mha.load_state_dict(state1, strict=False)
-    mha.load_state_dict(state2, strict=False)
-    mha.load_state_dict(state3, strict=False)
-    mha.load_state_dict(state4, strict=False)
+    state_dict = {
+            "q_w.weight": q_proj_weight,
+            "k_w.weight": k_proj_weight,
+            "v_w.weight": v_proj_weight,
+            "combine.weight": o_proj_weight  # 注意：你的模型里输出层叫 combine，输入参数叫 o_proj
+        }
+
+    # 加载权重
+    mha.load_state_dict(state_dict, strict=True)
 
     return mha(in_features)
 
@@ -227,14 +228,15 @@ def run_multihead_self_attention_with_rope(
     mha = MHA(d_model, num_heads, max_seq_len, theta)
     dtype = torch.float32
     device = torch.device('cpu')
-    state1 = {'q_w.weight':q_proj_weight.to(dtype=dtype, device=device)}
-    state2 = {'k_w.weight':k_proj_weight.to(dtype=dtype, device=device)}
-    state3 = {'v_w.weight':v_proj_weight.to(dtype=dtype, device=device)}
-    state4 = {'combine.weight':o_proj_weight.to(dtype=dtype, device=device)}
-    mha.load_state_dict(state1)
-    mha.load_state_dict(state2)
-    mha.load_state_dict(state3)
-    mha.load_state_dict(state4)
+    state_dict = {
+            "q_w.weight": q_proj_weight,
+            "k_w.weight": k_proj_weight,
+            "v_w.weight": v_proj_weight,
+            "combine.weight": o_proj_weight  # 注意：你的模型里输出层叫 combine，输入参数叫 o_proj
+        }
+
+    # 加载权重
+    mha.load_state_dict(state_dict, strict=True)
     return mha(in_features, token_positions)
 
 
@@ -356,7 +358,10 @@ def run_transformer_block(
     }
 
     TB.load_state_dict(mapped, strict=True)
-    return TB(in_features)
+    # Generate token positions for RoPE
+    seq_len = in_features.shape[1]
+    token_positions = torch.arange(seq_len, device=in_features.device).unsqueeze(0)
+    return TB(in_features, token_positions=token_positions)
 
 
 def run_transformer_lm(
@@ -568,7 +573,8 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.Cross_entropy import cross_entropy
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -580,14 +586,16 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.gradient_clipping import gradient_clipping
+    return gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.AdamW import AdamW
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -615,7 +623,8 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    from cs336_basics.transfomer.cosine import learning_rate_schedule
+    return learning_rate_schedule(it, max_learning_rate, min_learning_rate, warmup_iters, cosine_cycle_iters)
 
 
 def run_save_checkpoint(
