@@ -15,6 +15,6 @@ def cross_entropy(inputs, targets):
     
     log_probs = inputs_shifted - log_sum_exp.view(batch_size, 1)
 
-    target_log_probs = log_probs[torch.arange(batch_size), targets]
+    target_log_probs = log_probs[torch.arange(batch_size, device=targets.device), targets]
 
     return -torch.mean(target_log_probs)

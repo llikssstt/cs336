@@ -55,7 +55,7 @@ class MHA(nn.Module):
             k = self.rope(k, token_positions)
         
 
-        mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool))
+        mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.bool, device=in_features.device))
 
         score = scaled_dot_product_attention(q, k, v, mask)
         score = rearrange(score, 'b h s d -> b s (h d)')
