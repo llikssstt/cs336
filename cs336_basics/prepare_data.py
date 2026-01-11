@@ -4,10 +4,10 @@ Data preparation script for training.
 Converts text files to tokenized .npy format using a saved BPE tokenizer.
 
 Usage:
-    python -m cs336_basics.prepare_data \
+    python cs336_basics/prepare_data.py \
         --tokenizer tinystories_bpe.pkl \
-        --input data/tinystories.txt \
-        --output data/train.npy
+        --input /mnt/d/cs336/data/TinyStoriesV2-GPT4-valid.txt \
+        --output /mnt/d/cs336/data/TinyStoriesV2-GPT4-valid.npy
 """
 
 import argparse
@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument("--output", type=str, required=True,
                         help="Path to output .npy file")
     parser.add_argument("--special_tokens", type=str, nargs="*", 
-                        default=["<|endoftext|"])
+                        default=["<|endoftext|>"])
     return parser.parse_args()
 
 
@@ -62,7 +62,7 @@ def main():
     # Save as numpy array
     print(f"Saving to {args.output}...")
     arr = np.array(token_ids, dtype=np.uint16)
-    np.save(args.output, arr)
+    arr.tofile(args.output)  # Raw binary format for memmap
     print(f"Saved {len(arr):,} tokens to {args.output}")
     print("Done!")
 

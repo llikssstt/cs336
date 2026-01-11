@@ -1,5 +1,5 @@
 import torch
-import numpy
+import numpy as np
 import torch.nn as nn
 
 def data_loading(x, batch_size, context_length, device='cuda:0') -> tuple[torch.Tensor, torch.Tensor]:
@@ -15,6 +15,7 @@ def data_loading(x, batch_size, context_length, device='cuda:0') -> tuple[torch.
     )
     offsets = torch.arange(context_length, device=device, dtype=torch.long)  # (T,)
     idx = starts[:, None] + offsets[None, :]  # (B, T)
+    x = np.asarray(x).copy()         # 或 x = x.copy()
     x_t = torch.as_tensor(x, dtype=torch.long, device=device)
     inputs = x_t[idx]         # x[s : s+T]
     targets = x_t[idx + 1]    # x[s+1 : s+T+1]
